@@ -1,0 +1,22 @@
+resources/sql
+
+# k6 results
+results/
+*.log
+
+# Grafana
+monitoring/grafana/data/
+
+# Environment (use .env.example as template)
+.env
+
+# Generated from template
+monitoring/prometheus/prometheus.yml
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
