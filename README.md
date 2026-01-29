@@ -43,7 +43,8 @@ flowchart LR
 
     K6 -->|HTTP 요청| API
     API --> DB
-    API -.->|Actuator 메트릭\n/actuator/prometheus| PROM
+    K6 -.->|테스트 메트릭\nRemote Write| PROM
+    API -.->|서버 메트릭\n/actuator/prometheus| PROM
     PROM --> GRAF
 
     style K6 fill:#7d4cdb,color:#fff
@@ -64,9 +65,8 @@ sequenceDiagram
     loop
         K->>A: HTTP 요청 (GET /posts)
         A-->>K: HTTP 응답 (200 OK, 150ms)
+        K->>P: 테스트 메트릭 (VUs, RPS, 응답시간)
     end
-
-    Note over K: 테스트 완료 후 JSON 리포트 출력
 
     loop
         P->>A: GET /actuator/prometheus
