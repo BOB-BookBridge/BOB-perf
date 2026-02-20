@@ -1,20 +1,91 @@
+## 테스트 결과 요약
+**시나리오 기반 부하 테스트(VU 70) 기준**
+- `group_duration 평균 응답 시간` 361ms → 117ms **(-67.50%)**
+- `group_duration p95 응답 시간` 1.26s → 415ms **(-67.05%)**
+
+**병목**: 서버 HikariCP Waiting 증가(커넥션 대기)로 요청 지연 발생
+
+**해결**: 조회 패턴 기반 복합 인덱스 + Full-Text 인덱스 적용
+
+---
+
 ### 테스트 대상 서버
+- Server: AWS EC2 Free Tier (CPU 1 vCPU, Memory 1GB, Swap 2GB)
+- DB/커넥션 설정
+    - `max_connections=20`
+        - API 서버 HikariCP maximum_pool_size = 5
+    - `innodb_buffer_pool_size=128M` (1GB RAM 환경에서 App과 메모리 공유)
+- Test Duration: 10분 (2m ramp-up / 6m steady / 2m ramp-down)
+- VU: 50 / 70 / 100
 
-#### 1. 로컬 서버
+---
 
-| 항목 | 스펙                             |
-|------|--------------------------------|
-| OS | Windows 11                     |
-| CPU | AMD Ryzen 5 7520U (4코어 / 8스레드) |
-| Memory | 16GB                           |
+### 테스트 데이터
+- 회원: 300
+- 책: 3,000
+- 게시글: 30,000
+- 채팅방: 회원당 3개 (총 900)
+- 채팅 메시지: 20,000
 
-#### 2. EC2 서버
+---
 
-| 항목 | 스펙 |
-|------|------|
-| Instance | t2.micro (프리티어) |
-| vCPU | 1 |
-| Memory | 1GB |
+### 테스트 시나리오 (User Journey)
+
+k6 시나리오: [`k6/tests/user-journey-test.js`](./k6/tests/user-journey-test.js)
+- 로그인 → 내 정보 조회 → 읽지 않은 채팅 메시지 개수 조회 → 
+- 게시글 목록 조회 → 게시글 키워드(저자, 책 제목) 검색 → 게시글 상세 조회 → 
+- 채팅방 목록 조회 → 채팅방 입장 → 채팅 메시지 전송 (optional)
+
+---
+
+### 개선 사항
+1. 자주 조회되는 데이터 테이블의 복합 인덱스 생성
+2. 쿼리 개선 : DB 통계(집계) 쿼리 + 프로젝션 사용
+
+<table>
+  <thead>
+    <tr>
+      <th>VU</th>
+      <th>개선 전 평균</th>
+      <th>개선 후 평균</th>
+      <th>평균 변화율</th>
+      <th>개선 전 p95</th>
+      <th>개선 후 p95</th>
+      <th>p95 변화율</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td align="right">50</td>
+      <td align="right">123ms</td>
+      <td align="right">63ms</td>
+      <td align="right"><span style="color:#d73a49;"><strong>▼ 48.35%</strong></span></td>
+      <td align="right">405ms</td>
+      <td align="right">203ms</td>
+      <td align="right"><span style="color:#d73a49;"><strong>▼ 49.80%</strong></span></td>
+    </tr>
+    <tr>
+      <td align="right">70</td>
+      <td align="right">361ms</td>
+      <td align="right">117ms</td>
+      <td align="right"><span style="color:#d73a49;"><strong>▼ 67.50%</strong></span></td>
+      <td align="right">1.26s</td>
+      <td align="right">415ms</td>
+      <td align="right"><span style="color:#d73a49;"><strong>▼ 67.05%</strong></span></td>
+    </tr>
+    <tr>
+      <td align="right">100</td>
+      <td align="right">1.11s</td>
+      <td align="right">552ms</td>
+      <td align="right"><span style="color:#d73a49;"><strong>▼ 50.22%</strong></span></td>
+      <td align="right">3.61s</td>
+      <td align="right">2.78s</td>
+      <td align="right"><span style="color:#d73a49;"><strong>▼ 22.99%</strong></span></td>
+    </tr>
+  </tbody>
+</table>
+
+> 테스트는 각 VU(50/70/100) 조건에서 3회 실행 후 중앙값 기준으로 정리
 
 ---
 
@@ -43,8 +114,8 @@ flowchart LR
 
     K6 -->|HTTP 요청| API
     API --> DB
-    K6 -.->|테스트 메트릭\nRemote Write| PROM
-    API -.->|서버 메트릭\n/actuator/prometheus| PROM
+    K6 -.->|테스트 메트릭 Remote Write| PROM
+    API -.->|서버 메트릭 /actuator/prometheus| PROM
     PROM --> GRAF
 
     style K6 fill:#7d4cdb,color:#fff
@@ -63,8 +134,8 @@ sequenceDiagram
     participant G as Grafana
 
     loop
-        K->>A: HTTP 요청 (GET /posts)
-        A-->>K: HTTP 응답 (200 OK, 150ms)
+        K->>A: HTTP 요청 (예시: GET /api/resource)
+        A-->>K: HTTP 응답 (예시: 200 OK, 150ms)
         K->>P: 테스트 메트릭 (VUs, RPS, 응답시간)
     end
 
@@ -80,78 +151,12 @@ sequenceDiagram
 
 ---
 
-## 테스트 대상
-
-### BookBridge API 엔드포인트
-
-| API | 메서드 | 엔드포인트 | 설명 | 테스트 목적 |
-|-----|--------|-----------|------|-------------|
-
-## 측정 지표
-
-### 핵심 지표 (Golden Signals)
-
-| 지표 | k6 메트릭 | 의미 | 목표값 |
-|------|----------|------|--------|
-| **응답 시간** | `http_req_duration` | 요청~응답 소요 시간 | p95 < 500ms |
-| **에러율** | `http_req_failed` | 실패한 요청 비율 | < 1% |
-| **처리량 (RPS)** | `http_reqs` | 초당 처리 요청 수 | > 50 RPS |
-| **처리량 (TPS)** | `iterations` | 초당 트랜잭션 수 | 시나리오별 상이 |
-
----
-
-## 테스트 종류
-
-### Load Test (부하 테스트)
-
-**목적**: 예상 트래픽(300 VU)에서 정상 동작 여부 파악
-
-```mermaid
-graph LR
-    A[시작] --> B[300 VU까지 증가]
-    B --> C[300 VU 유지]
-    C --> D[종료]
-
-    style C fill:#4CAF50,color:#fff
-```
-
-### Stress Test (스트레스 테스트)
-
-**목적**: 한계 지점(500 VU), 성능 병목 지점 파악
-
-```mermaid
-graph LR
-    A[0 VU] --> B[100 VU]
-    B --> C[200 VU]
-    C --> D[300 VU]
-    D --> E[400 VU]
-    E --> F[500 VU]
-    F --> G[0 VU]
-
-    style D fill:#FF9800,color:#fff
-    style E fill:#f44336,color:#fff
-    style F fill:#f44336,color:#fff
-```
-
-### Soak Test (내구 테스트)
-
-**목적**: 장시간 운영 시 메모리 누수 등 문제 확인
-
-```mermaid
-graph LR
-    A[시작] --> B[일정 부하 유지]
-    B --> C[1시간 - 24시간]
-    C --> D[메모리/성능 변화 확인]
-```
-
----
-
 ### 사전 요구사항
 
 - Docker & Docker Compose
 - k6
 
-### 1. EC2 보안 그룹 설정
+### EC2 보안 그룹 설정
 
 로컬에서 EC2의 Actuator 엔드포인트에 접근하려면 보안 그룹에 인바운드 규칙 추가 필요
 
@@ -161,42 +166,20 @@ graph LR
 | Custom TCP | TCP | 8083 | 내 IP | 개발 서버 Actuator 접근 |
 
 
-### 3. 실행
-
-```bash
-docker-compose up -d
-```
-
-
-### Grafana 대시보드 확인
-
-1. http://localhost:3000 접속 (admin/admin)
-2. Dashboards > Spring Boot Performance 선택
-3. 실시간 메트릭 확인:
-   - TPS (Requests/sec)
-   - Response Time (P50, P95)
-   - Error Rate
-   - JVM Memory/CPU
-   - HTTP Status Codes
-
 ## 프로젝트 구조
 
 ```
 BOB-perf/
 ├── .env                        # 환경변수 설정
 │
-├── scripts/                    # 실행 스크립트
-│   ├── run-k6-test.sh          # k6 실행 (Linux/Mac)
-│   └── run-k6-test.ps1         # k6 실행 (Windows)
-│
 ├── k6/
-│   ├── config/
-│   │   └── thresholds.js       # 성능 임계값 정의
-│   └── scripts/                # 테스트 스크립트
+│   ├── tests/                  # k6 테스트 스크립트
+│   │   └── user-journey-test.js
+│   └── scripts/                # k6 실행 스크립트
 │
 └── monitoring/                 # Prometheus, Grafana 설정
     ├── prometheus/
-    │   └── prometheus.yml
+    │   └── prometheus.yml.template
     │   
     └── grafana/
         └── provisioning/
